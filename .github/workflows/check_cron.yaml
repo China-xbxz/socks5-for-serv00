@@ -23,7 +23,6 @@ jobs:
         id: execute-ssh-commands
         run: |
           results="SSH 命令执行结果：\n"
-          # Initialize an empty array for user results
           user_results=""
           while IFS= read -r account; do
             username=$(echo "$account" | jq -r '.username')
@@ -34,6 +33,10 @@ jobs:
             command_result=$(sshpass -p "$password" ssh -T -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$username@$ssh" \
               'bash <(curl -s https://raw.githubusercontent.com/China-xbxz/socks5-for-serv00/refs/heads/main/check_cron.sh)' 2>/dev/null || echo "失败：连接超时。")
             
+            # Debug: print the result of the command
+            echo "Command result for $username@$ssh: $command_result"
+            
+            # Check if the command result contains the word "失败"
             if [[ "$command_result" == *"失败"* ]]; then
               user_results="$user_results\n$username@$ssh:\n失败：连接超时。\n"
             else
@@ -47,8 +50,8 @@ jobs:
           # Add the collected user results to the main results string
           results="$results$user_results"
 
-          # Send results to Telegram
-          echo "$results"
+          # Debug: print final results before sending to Telegram
+          echo -e "$results"
 
       - name: Notify Telegram
         if: always()
