@@ -1,16 +1,16 @@
 name: Execute SSH Commands
 
 on:
-  workflow_dispatch: # 手动触发工作流
+  workflow_dispatch:
   schedule:
-    - cron: "30 0,13 * * *"  # 每天 北京时间 早8点30分 晚9点30分 各运行一次
+    - cron: "30 0,13 * * *"  # 每天 北京时间 早8:30 晚9:30 各运行一次
 
 jobs:
   execute-commands:
     runs-on: ubuntu-latest
     steps:
       - name: Set up SSHPass
-        run: sudo apt-get update && sudo apt-get install -y sshpass
+        run: sudo apt-get update && sudo apt-get install -y sshpass jq
 
       - name: Get ACCOUNTS_JSON
         id: get-accounts
@@ -18,21 +18,36 @@ jobs:
           echo "$ACCOUNTS_JSON" > accounts.json
         env:
           ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
-        # 从 GitHub Secrets 获取 ACCOUNTS_JSON 变量，并保存到文件 accounts.json
 
-      - name: Generate SSH Commands
-        id: generate-ssh-commands
+      - name: Execute SSH Commands and Collect Results
+        id: execute-ssh-commands
         run: |
-          echo "#!/bin/bash" > sshpass.sh
+          results="SSH 命令执行结果：\n"
           while IFS= read -r account; do
             username=$(echo "$account" | jq -r '.username')
             password=$(echo "$account" | jq -r '.password')
             ssh=$(echo "$account" | jq -r '.ssh')
 
-            echo "echo \"Executing for $username@$ssh\"" >> sshpass.sh
-            echo "sshpass -p '$password' ssh -o StrictHostKeyChecking=no '$username@$ssh' 'bash <(curl -s https://raw.githubusercontent.com/China-xbxz/socks5-for-serv00/refs/heads/main/check_cron.sh)'" >> sshpass.sh
+            echo "Executing for $username@$ssh"
+            command_result=$(sshpass -p "$password" ssh -o StrictHostKeyChecking=no "$username@$ssh" \
+              'bash <(curl -s https://raw.githubusercontent.com/China-xbxz/socks5-for-serv00/refs/heads/main/check_cron.sh)' || echo "失败：连接超时。")
+            
+            if [[ "$command_result" == *"失败"* ]]; then
+              results="$results\n$username@$ssh:\n失败：连接超时。\n"
+            else
+              results="$results\n$username@$ssh:\n成功：计划任务已执行。\n"
+            fi
           done < <(jq -c '.[]' accounts.json)
-          chmod +x sshpass.sh
+          echo -e "$results" > results.log
 
-      - name: Execute SSH Commands
-        run: ./sshpass.sh
+      - name: Notify Telegram
+        if: always()
+        run: |
+          TG_BOT_TOKEN=${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID=${{ secrets.TG_CHAT_ID }}
+          results=$(cat results.log)
+
+          # Send the formatted message in Chinese
+          curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+            -d chat_id="$TG_CHAT_ID" \
+            -d text="$results"
